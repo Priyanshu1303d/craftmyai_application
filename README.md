@@ -34,7 +34,6 @@ Deliver high-quality AI solutions with seamless support, making advanced technol
 - **Frontend & Backend**: Streamlit
 - **Database**: SQLite
 - **Email Integration**: Native email client integration
-- **Environment Management**: dotenv
 
 ## 🔧 Installation & Setup
 
