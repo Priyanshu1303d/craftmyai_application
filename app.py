@@ -1,18 +1,14 @@
 import urllib.parse
-
 import streamlit as st
-import toml
-
 from database import (accept_assignment, add_project, assign_project,
                       delete_project, get_assigned_projects, get_availability,
                       get_pending_assignments, get_projects, init_db,
                       reject_assignment, update_availability)
 
 
-# get admin credentials
-secrets = toml.load("secret.toml")
-admin_users = secrets.get("ADMIN_USERS", [])
-admin_passwords = secrets.get("ADMIN_PASSWORDS", [])
+# Load admin credentials from Streamlit secrets
+ADMIN_USERS = st.secrets["ADMIN_USERS"]
+ADMIN_PASSWORDS = st.secrets["ADMIN_PASSWORDS"]
 
 # Initialize DB
 init_db()

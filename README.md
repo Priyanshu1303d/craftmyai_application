@@ -65,13 +65,13 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. **Create .env file**
+4. **Create secrets file**
 
-Create a `.env` file in the root directory with the following variables:
+Create a `secrets.toml` file in the `.streamlit` directory in the root folder with the following variables:
 
 ```
-ADMIN_USERS=admin1,admin2
-ADMIN_PASSWORDS=password1,password2
+ADMIN_USERS=[admin1,admin2]
+ADMIN_PASSWORDS=[password1,password2]
 ```
 
 5. **Run the application**
