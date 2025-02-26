@@ -1,21 +1,17 @@
-import os
-import sqlite3
 import urllib.parse
 
 import streamlit as st
-from dotenv import load_dotenv
+import toml
 
 from database import (accept_assignment, add_project, assign_project,
                       delete_project, get_assigned_projects, get_availability,
                       get_pending_assignments, get_projects, init_db,
                       reject_assignment, update_availability)
 
-# Load environment variables
-load_dotenv()
-admin_users = os.getenv("ADMIN_USERS", "").split(",")  # Comma-separated admin usernames
-admin_passwords = os.getenv("ADMIN_PASSWORDS", "").split(
-    ","
-)  # Comma-separated passwords
+# get admin credentials
+secrets = toml.load("secret.toml")
+admin_users = secrets.get("ADMIN_USERS", [])
+admin_passwords = secrets.get("ADMIN_PASSWORDS", [])
 
 # Initialize DB
 init_db()
@@ -27,6 +23,16 @@ REOPEN_DATE = availability_status["reopen_date"]
 
 # Set page config
 st.set_page_config(page_title="CraftMyAI - AI Solutions", page_icon="🛠️", layout="wide")
+
+# Center align the app
+st.markdown(
+    """
+    <style>
+        .block-container { max-width: 800px; margin: auto; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Sidebar Navigation
 st.sidebar.title("CraftMyAI")
