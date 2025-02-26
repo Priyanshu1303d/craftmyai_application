@@ -7,8 +7,8 @@ from database import (accept_assignment, add_project, assign_project,
 
 
 # Load admin credentials from Streamlit secrets
-ADMIN_USERS = st.secrets["ADMIN_USERS"]
-ADMIN_PASSWORDS = st.secrets["ADMIN_PASSWORDS"]
+admin_users = st.secrets["ADMIN_USERS"]
+admin_passwords = st.secrets["ADMIN_PASSWORDS"]
 
 # Initialize DB
 init_db()
