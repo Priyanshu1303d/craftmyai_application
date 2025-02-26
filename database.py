@@ -152,7 +152,6 @@ def accept_assignment(project_id):
     conn.commit()
     conn.close()
 
-
 def reject_assignment(project_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
