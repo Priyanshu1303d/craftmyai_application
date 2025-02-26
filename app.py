@@ -8,6 +8,7 @@ from database import (accept_assignment, add_project, assign_project,
                       get_pending_assignments, get_projects, init_db,
                       reject_assignment, update_availability)
 
+
 # get admin credentials
 secrets = toml.load("secret.toml")
 admin_users = secrets.get("ADMIN_USERS", [])
