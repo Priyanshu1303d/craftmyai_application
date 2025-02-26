@@ -1,9 +1,13 @@
 import sqlite3
+import os
 
-DB_FILE = "data/projects.db"
+DB_DIR = "data"
+DB_FILE = os.path.join(DB_DIR, "projects.db")
 
 
 def init_db():
+    if not os.path.exists(DB_DIR):
+        os.makedirs(DB_DIR)
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
