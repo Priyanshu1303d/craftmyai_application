@@ -309,3 +309,5 @@ if page == "🔐 Admin Panel":
 
         st.write("")
         st.write("")
+
+# TODO: Add a client dashboard with messaging support
