@@ -1,5 +1,6 @@
-import sqlite3
+import json
 import os
+import sqlite3
 
 DB_DIR = "data"
 DB_FILE = os.path.join(DB_DIR, "projects.db")
@@ -18,9 +19,12 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 description TEXT NOT NULL,
-                assigned_admin TEXT DEFAULT NULL,
-                assignment_status TEXT DEFAULT NULL,
-                assigned_by TEXT DEFAULT NULL
+                assigned_admins TEXT DEFAULT '[]',
+                assigned_by TEXT DEFAULT NULL,
+                client_email TEXT DEFAULT NULL,
+                progress INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'pending',
+                last_update TEXT DEFAULT NULL
             )
     """
     )
@@ -36,6 +40,61 @@ def init_db():
     """
     )
 
+    # Create project_updates table if not exists
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            update_text TEXT NOT NULL,
+            update_date TEXT NOT NULL,
+            updated_by TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+        )
+    """
+    )
+
+    # Create clients table if not exists
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS clients (
+            email TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            password TEXT NOT NULL
+        )
+    """
+    )
+
+    # Create assignment_status table to track individual admin acceptance
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS assignment_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            admin_username TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE,
+            UNIQUE(project_id, admin_username)
+        )
+    """
+    )
+
+    # Create messages table for client-admin communication
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            sender TEXT NOT NULL,
+            recipient TEXT NOT NULL,
+            message TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            read BOOLEAN DEFAULT 0,
+            FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+        )
+    """
+    )
+
     # Insert default availability if not exists
     cursor.execute("SELECT COUNT(*) FROM availability")
     if cursor.fetchone()[0] == 0:
@@ -47,11 +106,12 @@ def init_db():
     conn.close()
 
 
-def add_project(name, description):
+def add_project(name, description, client_email=None):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO projects (name, description) VALUES (?, ?)", (name, description)
+        "INSERT INTO projects (name, description, client_email) VALUES (?, ?, ?)",
+        (name, description, client_email),
     )
     conn.commit()
     conn.close()
@@ -64,11 +124,11 @@ def get_projects(assigned=None):
     if assigned is None:
         cursor.execute("SELECT * FROM projects")
     elif assigned:
-        cursor.execute(
-            "SELECT * FROM projects WHERE assigned_admin IS NOT NULL AND assignment_status = 'accepted'"
-        )
+        cursor.execute("SELECT * FROM projects WHERE assigned_admins != '[]'")
     else:
-        cursor.execute("SELECT * FROM projects WHERE assigned_admin IS NULL")
+        cursor.execute(
+            "SELECT * FROM projects WHERE assigned_admins = '[]' OR assigned_admins IS NULL"
+        )
 
     projects = cursor.fetchall()
     conn.close()
@@ -106,19 +166,37 @@ def update_availability(status, reopen_date):
     conn.close()
 
 
-def assign_project(project_id, admin, assigned_by):
+def assign_project(project_id, admins, assigned_by):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    if admin:
+
+    if isinstance(admins, str):
+        admins = [admins]
+
+    admins_json = json.dumps(admins)
+
+    if admins:
         cursor.execute(
-            "UPDATE projects SET assigned_admin = ?, assignment_status = 'pending', assigned_by = ? WHERE id = ?",
-            (admin, assigned_by, project_id),
+            "UPDATE projects SET assigned_admins = ?, assigned_by = ? WHERE id = ?",
+            (admins_json, assigned_by, project_id),
         )
+
+        # Add entries to assignment_status table for each admin
+        for admin in admins:
+            cursor.execute(
+                "INSERT OR REPLACE INTO assignment_status (project_id, admin_username, status) VALUES (?, ?, 'pending')",
+                (project_id, admin),
+            )
     else:
         cursor.execute(
-            "UPDATE projects SET assigned_admin = NULL, assignment_status = NULL, assigned_by = NULL WHERE id = ?",
+            "UPDATE projects SET assigned_admins = '[]', assigned_by = NULL WHERE id = ?",
             (project_id,),
         )
+        # Clear assignment status entries
+        cursor.execute(
+            "DELETE FROM assignment_status WHERE project_id = ?", (project_id,)
+        )
+
     conn.commit()
     conn.close()
 
@@ -126,10 +204,17 @@ def assign_project(project_id, admin, assigned_by):
 def get_assigned_projects(admin):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
+    # Get all projects where the admin has accepted the assignment
     cursor.execute(
-        "SELECT * FROM projects WHERE assigned_admin = ? AND assignment_status = 'accepted'",
+        """
+        SELECT p.* FROM projects p
+        JOIN assignment_status a ON p.id = a.project_id
+        WHERE a.admin_username = ? AND a.status = 'accepted'
+        """,
         (admin,),
     )
+
     assigned_projects = cursor.fetchall()
     conn.close()
     return assigned_projects
@@ -138,31 +223,225 @@ def get_assigned_projects(admin):
 def get_pending_assignments(admin):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
     cursor.execute(
-        "SELECT * FROM projects WHERE assigned_admin = ? AND assignment_status = 'pending'",
+        """
+        SELECT p.* FROM projects p
+        JOIN assignment_status a ON p.id = a.project_id
+        WHERE a.admin_username = ? AND a.status = 'pending'
+        """,
         (admin,),
     )
+
     pending_assignments = cursor.fetchall()
     conn.close()
     return pending_assignments
 
 
-def accept_assignment(project_id):
+def accept_assignment(project_id, admin):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Update just this admin's status
+    cursor.execute(
+        "UPDATE assignment_status SET status = 'accepted' WHERE project_id = ? AND admin_username = ?",
+        (project_id, admin),
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def reject_assignment(project_id, admin):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Get current assigned admins
+    cursor.execute("SELECT assigned_admins FROM projects WHERE id = ?", (project_id,))
+    result = cursor.fetchone()
+
+    if result:
+        admins = json.loads(result[0])
+        if admin in admins:
+            admins.remove(admin)
+
+            # Remove this admin from assignment_status
+            cursor.execute(
+                "DELETE FROM assignment_status WHERE project_id = ? AND admin_username = ?",
+                (project_id, admin),
+            )
+
+            # Update the project's assigned admins list
+            cursor.execute(
+                "UPDATE projects SET assigned_admins = ? WHERE id = ?",
+                (json.dumps(admins), project_id),
+            )
+
+            conn.commit()
+
+    conn.close()
+
+
+def update_project_progress(project_id, progress, status, last_update=None):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    if last_update:
+        cursor.execute(
+            "UPDATE projects SET progress = ?, status = ?, last_update = ? WHERE id = ?",
+            (progress, status, last_update, project_id),
+        )
+    else:
+        cursor.execute(
+            "UPDATE projects SET progress = ?, status = ? WHERE id = ?",
+            (progress, status, project_id),
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def add_project_update(project_id, update_text, update_date, updated_by):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE projects SET assignment_status = 'accepted' WHERE id = ?", (project_id,)
+        "INSERT INTO project_updates (project_id, update_text, update_date, updated_by) VALUES (?, ?, ?, ?)",
+        (project_id, update_text, update_date, updated_by),
     )
     conn.commit()
     conn.close()
 
 
-def reject_assignment(project_id):
+def get_project_updates(project_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE projects SET assigned_admin = NULL, assignment_status = NULL, assigned_by = NULL WHERE id = ?",
+        "SELECT * FROM project_updates WHERE project_id = ? ORDER BY update_date DESC",
         (project_id,),
     )
+    updates = cursor.fetchall()
+    conn.close()
+    return updates
+
+
+def get_project_by_id(project_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+    project = cursor.fetchone()
+    conn.close()
+    return project
+
+
+def get_client_projects(client_email):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM projects WHERE client_email = ?", (client_email,))
+    projects = cursor.fetchall()
+    conn.close()
+    return projects
+
+
+def register_client(email, name, password):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Check if client already exists
+    cursor.execute("SELECT COUNT(*) FROM clients WHERE email = ?", (email,))
+    if cursor.fetchone()[0] > 0:
+        conn.close()
+        return False
+
+    cursor.execute(
+        "INSERT INTO clients (email, name, password) VALUES (?, ?, ?)",
+        (email, name, password),
+    )
     conn.commit()
     conn.close()
+    return True
+
+
+def authenticate_client(email, password):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM clients WHERE email = ? AND password = ?", (email, password)
+    )
+    client = cursor.fetchone()
+    conn.close()
+    return client
+
+
+def get_client_by_email(email):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clients WHERE email = ?", (email,))
+    client = cursor.fetchone()
+    conn.close()
+    return client
+
+
+# New functions for messaging
+def send_message(project_id, sender, recipient, message, timestamp):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO messages (project_id, sender, recipient, message, timestamp) VALUES (?, ?, ?, ?, ?)",
+        (project_id, sender, recipient, message, timestamp),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_messages(project_id, user):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT * FROM messages 
+        WHERE project_id = ? AND (sender = ? OR recipient = ? OR recipient = 'all')
+        ORDER BY timestamp ASC
+        """,
+        (project_id, user, user),
+    )
+    messages = cursor.fetchall()
+    conn.close()
+    return messages
+
+
+def mark_messages_as_read(project_id, recipient):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE messages SET read = 1 WHERE project_id = ? AND recipient = ?",
+        (project_id, recipient),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_unread_message_count(user):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) FROM messages WHERE recipient = ? AND read = 0", (user,)
+    )
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_project_admins(project_id):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT admin_username FROM assignment_status 
+        WHERE project_id = ? AND status = 'accepted'
+        """,
+        (project_id,),
+    )
+    admins = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return admins
